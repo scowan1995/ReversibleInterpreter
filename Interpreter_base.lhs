@@ -116,10 +116,10 @@ Evaluate an expression
 type Eval a = ReaderT Env (ExceptT String Identity) a
 type Env = Map.Map Name Val
 
-> type Env1 = Map.Map Name Val
+> type History = Map.Map Name [Val]
 
-> type MyType a = StateT Env1 (ExceptT String IO) a
-> runMyType prog = runExceptT (runStateT prog Map.empty)
+> type MyType a = StateT (Env, History) (ExceptT String IO) a
+> runMyType p = runExceptT (runStateT p (Map.empty, Map.empty))
 
 > run1 :: Statement -> IO ()  --  written to take a mytype but says it takes a statement
 > run1 prog = do
@@ -129,28 +129,37 @@ type Env = Map.Map Name Val
 >     Right ((), env) -> return ()
 
 > set :: (Name, Val) -> MyType ()
-> set (s,i) = state (\table -> ((), Map.insert s i table))
+> set (s,i) = state (\table -> ((), (Map.insert s i (fst table), Map.insertWith (++) s [i] (snd table))))
 
 > exec :: Statement -> MyType () -- Eval Val
 > exec (Assign s e) = do
->    env <- get
->    Right res <- return $ runEval env (eval e)   -- get right side, put value in except monad, get value
+>    (env, his) <- get
+>    Right res <- return $ runEval env (eval e)
 >    set (s, res)
+
 > exec (Seq e0 e1) = do
 >    exec e0
->    liftIO $ putStrLn "enter something"
+>    liftIO $ putStrLn "enter s to get current state and then step, enter h to get current state, the history of all variables and then step, press anything else to just step"
 >    c <- liftIO getChar
 >    case c of
->      's' -> do env <- get
->                liftIO $ putStrLn $ concat $ concatMap (\(a,b) -> [show a, " ", show b, "\n"]) $ Map.toList env
+>      's' -> do (env, his) <- get
+>                liftIO $ putStrLn "\n Showing state: "
+>                liftIO $ putStrLn $ concat $ concatMap (\(a,b) -> [show a, " ", show b, "\n"]) $ Map.toList $ env
+>                exec e1
+>      'h' -> do (env, his) <- get
+>                liftIO $ putStrLn "\n Showing state and history: "
+>                liftIO $ putStrLn "\n current state: "
+>                liftIO $ putStrLn $ concat $ concatMap (\(a,b) -> [show a, " ", show b, "\n"]) $ Map.toList $ env
+>                liftIO $ putStrLn "\n history:"
+>                liftIO $ putStrLn $ concat $ concatMap (\(a,b) -> [show a, " ", show b, "\n"]) $  Map.toList his
 >                exec e1
 >      _ -> exec e1
 
-> exec (If cond s0 s1) = do st <- get
+> exec (If cond s0 s1) = do (st, his) <-  get
 >                           Right (B val) <- return $ runEval st (eval cond)
 >                           if val then do exec s0 else do exec s1
 
-> exec (While cond s) = do st <- get
+> exec (While cond s) = do (st, his) <-  get
 >                          Right (B val) <- return $ runEval st (eval cond)
 >                          if val then do exec s >> exec (While cond s) else return ()
 
